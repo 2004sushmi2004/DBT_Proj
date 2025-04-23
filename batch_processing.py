@@ -1,31 +1,31 @@
 from pyspark.sql import SparkSession
+from pyspark.sql.functions import col
 
-# ✅ Initialize Spark with JDBC driver registered
 spark = SparkSession.builder \
     .appName("TwitterBatchAnalysis") \
     .config("spark.jars", "postgresql-42.7.3.jar") \
     .getOrCreate()
 
-# ✅ Read batch data from 'tweets' table in PostgreSQL
+# Read from correct table - note consistent indentation
 batch_df = spark.read \
     .format("jdbc") \
     .option("url", "jdbc:postgresql://localhost/twitter_data") \
-    .option("dbtable", "tweets") \
+    .option("dbtable", "tweet_analysis") \
     .option("user", "spark_user") \
     .option("password", "spark_pass") \
     .option("driver", "org.postgresql.Driver") \
     .load()
 
-# ✅ Perform batch sentiment analysis
+# Perform batch analysis
 batch_analysis = batch_df.groupBy("airline", "sentiment") \
-    .count() \
-    .orderBy("airline", "count", ascending=False)
+    .agg({"count": "max"}) \
+    .withColumnRenamed("max(count)", "tweet_count_batch") \
+    .orderBy(col("tweet_count_batch").desc())
 
-# ✅ Display batch results
 print("📊 Batch Analysis Results:")
 batch_analysis.show(truncate=False)
 
-# ✅ Read previously processed streaming results
+# Read streaming results
 streaming_results = spark.read \
     .format("jdbc") \
     .option("url", "jdbc:postgresql://localhost/twitter_data") \
@@ -35,10 +35,20 @@ streaming_results = spark.read \
     .option("driver", "org.postgresql.Driver") \
     .load()
 
-# ✅ Compare batch vs streaming results
+# Compare results
 print("📈 Batch vs Streaming Comparison:")
-batch_analysis.join(streaming_results, ["airline", "sentiment"], "outer") \
-    .show(truncate=False)
+comparison = batch_analysis.join(
+    streaming_results.withColumnRenamed("count", "tweet_count_streaming"), 
+    ["airline", "sentiment"],
+    "outer"
+).select(
+    "airline", 
+    "sentiment", 
+    "tweet_count_batch", 
+    "tweet_count_streaming", 
+    "analysis_time"
+).orderBy(col("tweet_count_streaming").desc())
 
-# ✅ Clean shutdown
+comparison.show(truncate=False)
+
 spark.stop()
